@@ -53,9 +53,10 @@ async def on_ready():
             name="whispers in the dollhouse 🧸"
         )
     )
+
+    await bot.tree.sync()  # GLOBAL sync
     print(f"🧸 Dollhouse Lurker online as {bot.user}")
-    await bot.tree.sync()
-    print("✅ Slash commands synced")
+    print("✅ Global slash commands synced")
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -398,6 +399,30 @@ async def setlevelchannel(
         f"✨ Level-up messages will now be sent to {channel.mention}",
         ephemeral=True
     )
+
+@bot.tree.error
+async def on_app_command_error(
+    interaction: discord.Interaction,
+    error: app_commands.AppCommandError
+):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message(
+            "❌ You don't have permission to use this command.",
+            ephemeral=True
+        )
+
+    elif isinstance(error, app_commands.NoPrivateMessage):
+        await interaction.response.send_message(
+            "❌ This command can only be used in servers.",
+            ephemeral=True
+        )
+
+    else:
+        await interaction.response.send_message(
+            "⚠️ Something went wrong while running this command.",
+            ephemeral=True
+        )
+        raise error
 
 # --------------------
 # Run
