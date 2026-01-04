@@ -21,6 +21,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 CONFIG_FILE = "config.json"
 LEVELS_FILE = "levels.json"
+
 XP_COOLDOWN = 30  # seconds
 xp_cooldowns = {}
 
@@ -54,9 +55,10 @@ async def on_ready():
         )
     )
 
-    await bot.tree.sync()  # GLOBAL sync
+    await bot.tree.sync()
     print(f"🧸 Dollhouse Lurker online as {bot.user}")
     print("✅ Global slash commands synced")
+    print("📜 Commands:", [cmd.name for cmd in bot.tree.get_commands()])
 
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -72,7 +74,6 @@ async def on_member_join(member: discord.Member):
         if role:
             await member.add_roles(role)
 
-    # Welcome channel
     channel_id = guild_config.get("welcome_channel")
     if not channel_id:
         return
@@ -85,28 +86,23 @@ async def on_member_join(member: discord.Member):
         f"<#{cid}>" for cid in guild_config.get("required_channels", [])
     )
 
-    custom_message = guild_config.get(
+    template = guild_config.get(
         "welcome_message",
         "Welcome {user} to **{server}**! Please check {channels}"
     )
 
-    message_text = custom_message.format(
+    text = template.format(
         user=member.mention,
         server=member.guild.name,
         channels=required_channels or "the server channels",
         membercount=member.guild.member_count
     )
 
-    embed = discord.Embed(
-        description=message_text,
-        color=discord.Color.pink()
-    )
-
+    embed = discord.Embed(description=text, color=discord.Color.pink())
     embed.set_author(
         name=f"{member.name} joined the dollhouse",
         icon_url=member.display_avatar.url
     )
-
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.set_footer(text=f"Member #{member.guild.member_count}")
 
@@ -120,32 +116,7 @@ async def on_message(message: discord.Message):
     guild_id = str(message.guild.id)
     user_id = str(message.author.id)
 
-    levels.setdefault(guild_id, {})
-    user_data = levels[guild_id].setdefault(user_id, {"xp": 0, "level": 1})
-
-    xp_gain = random.randint(5, 10)
-    user_data["xp"] += xp_gain
-
-    next_level_xp = user_data["level"] * 100
-    if user_data["xp"] >= next_level_xp:
-        user_data["level"] += 1
-        user_data["xp"] = 0
-        await message.channel.send(
-            f"🎀 {message.author.mention} reached **Level {user_data['level']}**!"
-        )
-
-    save_json(LEVELS_FILE, levels)
-    await bot.process_commands(message)
-
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot or not message.guild:
-        return
-
-    guild_id = str(message.guild.id)
-    user_id = str(message.author.id)
-
-    # Anti-spam cooldown
+    # XP cooldown
     now = message.created_at.timestamp()
     xp_cooldowns.setdefault(guild_id, {})
     last_time = xp_cooldowns[guild_id].get(user_id, 0)
@@ -156,7 +127,7 @@ async def on_message(message: discord.Message):
 
     xp_cooldowns[guild_id][user_id] = now
 
-    # Level data
+    # Level system
     levels.setdefault(guild_id, {})
     user_data = levels[guild_id].setdefault(user_id, {"xp": 0, "level": 1})
 
@@ -167,7 +138,6 @@ async def on_message(message: discord.Message):
         user_data["level"] += 1
         user_data["xp"] = 0
 
-        # Level channel
         level_channel_id = config.get(guild_id, {}).get("level_channel")
         level_channel = (
             message.guild.get_channel(level_channel_id)
@@ -193,11 +163,8 @@ async def on_message(message: discord.Message):
 @bot.tree.command(name="setwelcome", description="Set the welcome channel")
 @app_commands.checks.has_permissions(administrator=True)
 async def setwelcome(interaction: discord.Interaction, channel: discord.TextChannel):
-    guild_id = str(interaction.guild.id)
-    config.setdefault(guild_id, {})
-    config[guild_id]["welcome_channel"] = channel.id
+    config.setdefault(str(interaction.guild.id), {})["welcome_channel"] = channel.id
     save_json(CONFIG_FILE, config)
-
     await interaction.response.send_message(
         f"✅ Welcome channel set to {channel.mention}", ephemeral=True
     )
@@ -206,153 +173,64 @@ async def setwelcome(interaction: discord.Interaction, channel: discord.TextChan
 @bot.tree.command(name="setautorole", description="Set autorole for new members")
 @app_commands.checks.has_permissions(administrator=True)
 async def setautorole(interaction: discord.Interaction, role: discord.Role):
-    guild_id = str(interaction.guild.id)
-    config.setdefault(guild_id, {})
-    config[guild_id]["autorole"] = role.id
+    config.setdefault(str(interaction.guild.id), {})["autorole"] = role.id
     save_json(CONFIG_FILE, config)
-
     await interaction.response.send_message(
         f"🎭 Autorole set to **{role.name}**", ephemeral=True
     )
 
 @app_commands.guild_only()
-@bot.tree.command(name="addrequired", description="Add a required channel to welcome embed")
+@bot.tree.command(name="addrequired", description="Add required channel to welcome")
 @app_commands.checks.has_permissions(administrator=True)
 async def addrequired(interaction: discord.Interaction, channel: discord.TextChannel):
-    guild_id = str(interaction.guild.id)
-    config.setdefault(guild_id, {})
-    config[guild_id].setdefault("required_channels", [])
-
-    if channel.id not in config[guild_id]["required_channels"]:
-        config[guild_id]["required_channels"].append(channel.id)
-
+    guild = config.setdefault(str(interaction.guild.id), {})
+    guild.setdefault("required_channels", []).append(channel.id)
     save_json(CONFIG_FILE, config)
     await interaction.response.send_message(
-        f"📌 Added {channel.mention} to welcome message", ephemeral=True
+        f"📌 Added {channel.mention}", ephemeral=True
     )
 
 @app_commands.guild_only()
-@bot.tree.command(name="setwelcomemessage", description="Set a custom welcome message")
+@bot.tree.command(name="setwelcomemessage", description="Set custom welcome message")
 @app_commands.checks.has_permissions(administrator=True)
 async def setwelcomemessage(interaction: discord.Interaction, message: str):
-    guild_id = str(interaction.guild.id)
-    config.setdefault(guild_id, {})
-    config[guild_id]["welcome_message"] = message
+    config.setdefault(str(interaction.guild.id), {})["welcome_message"] = message
     save_json(CONFIG_FILE, config)
-
     await interaction.response.send_message(
-        "🧸 Custom welcome message saved!", ephemeral=True
+        "🧸 Welcome message updated", ephemeral=True
     )
 
 @app_commands.guild_only()
-@bot.tree.command(name="help", description="Show Dollhouse Lurker help menu")
-async def help_command(
-    interaction: discord.Interaction,
-    command: str | None = None
-):
-    embed_color = discord.Color.pink()
-
-    if command:
-        command = command.lower()
-
-        command_help = {
-            "setwelcome": "Set the welcome channel.\n**Admin only**",
-            "setautorole": "Set the autorole for new members.\n**Admin only**",
-            "addrequired": "Add a channel to mention in the welcome embed.\n**Admin only**",
-            "setwelcomemessage": "Set a custom welcome message using placeholders.\n**Admin only**",
-            "level": "Check your current level and XP.",
-            "help": "Show the help menu."
-        }
-
-        if command not in command_help:
-            await interaction.response.send_message(
-                "❌ That command does not exist.",
-                ephemeral=True
-            )
-            return
-
-        embed = discord.Embed(
-            title=f"🧸 Help — /{command}",
-            description=command_help[command],
-            color=embed_color
-        )
-        embed.set_footer(text="Dollhouse Lurker • Slash Commands Only")
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        return
-
-    # Main help menu
-    embed = discord.Embed(
-        title="🧸 Dollhouse Lurker Help",
-        description="A quiet watcher of the dollhouse.\nAll commands are **slash commands**.",
-        color=embed_color
+@bot.tree.command(name="setlevelchannel", description="Set level-up channel")
+@app_commands.checks.has_permissions(administrator=True)
+async def setlevelchannel(interaction: discord.Interaction, channel: discord.TextChannel):
+    config.setdefault(str(interaction.guild.id), {})["level_channel"] = channel.id
+    save_json(CONFIG_FILE, config)
+    await interaction.response.send_message(
+        f"✨ Level messages sent to {channel.mention}", ephemeral=True
     )
-
-    embed.add_field(
-        name="🎀 Welcome System",
-        value=(
-            "`/setwelcome` – Set welcome channel\n"
-            "`/setwelcomemessage` – Custom welcome text\n"
-            "`/addrequired` – Mention required channels"
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="🎭 Roles",
-        value="`/setautorole` – Assign role on join",
-        inline=False
-    )
-
-    embed.add_field(
-        name="✨ Levels",
-        value="`/level` – View your level & XP",
-        inline=False
-    )
-
-    embed.add_field(
-        name="🧸 Help",
-        value="`/help [command]` – Get help for a command",
-        inline=False
-    )
-
-    embed.set_thumbnail(url=interaction.client.user.display_avatar.url)
-    embed.set_footer(text="Dollhouse Lurker • Watching quietly")
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @app_commands.guild_only()
 @bot.tree.command(name="level", description="Check your level")
 async def level(interaction: discord.Interaction):
-    guild_id = str(interaction.guild.id)
-    user_id = str(interaction.user.id)
-
-    user_data = levels.get(guild_id, {}).get(user_id)
-    if not user_data:
-        await interaction.response.send_message(
-            "You don't have a level yet!", ephemeral=True
-        )
+    data = levels.get(str(interaction.guild.id), {}).get(str(interaction.user.id))
+    if not data:
+        await interaction.response.send_message("No level yet 🧸", ephemeral=True)
         return
 
     await interaction.response.send_message(
-        f"🧸 **Level:** {user_data['level']}\n✨ **XP:** {user_data['xp']}",
+        f"🧸 Level **{data['level']}**\n✨ XP **{data['xp']}**",
         ephemeral=True
     )
 
 @app_commands.guild_only()
-@bot.tree.command(name="leaderboard", description="View the server level leaderboard")
+@bot.tree.command(name="leaderboard", description="View leaderboard")
 async def leaderboard(interaction: discord.Interaction):
-    guild_id = str(interaction.guild.id)
-    guild_levels = levels.get(guild_id)
-
+    guild_levels = levels.get(str(interaction.guild.id))
     if not guild_levels:
-        await interaction.response.send_message(
-            "No one has leveled up yet 🧸",
-            ephemeral=True
-        )
+        await interaction.response.send_message("No data yet 🧸", ephemeral=True)
         return
 
-    # Sort users by level first, then XP
     sorted_users = sorted(
         guild_levels.items(),
         key=lambda x: (x[1]["level"], x[1]["xp"]),
@@ -361,7 +239,6 @@ async def leaderboard(interaction: discord.Interaction):
 
     embed = discord.Embed(
         title="🏆 Dollhouse Leaderboard",
-        description="Top lurkers in the dollhouse",
         color=discord.Color.pink()
     )
 
@@ -370,57 +247,43 @@ async def leaderboard(interaction: discord.Interaction):
         member = interaction.guild.get_member(int(user_id))
         if not member:
             continue
-
         embed.add_field(
             name=f"{rank}. {member.display_name}",
-            value=f"🧸 Level **{data['level']}** • ✨ XP **{data['xp']}**",
+            value=f"Level **{data['level']}** • XP **{data['xp']}**",
             inline=False
         )
         rank += 1
 
-    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
-    embed.set_footer(text="Dollhouse Lurker • Watching who grows")
-
     await interaction.response.send_message(embed=embed)
 
 @app_commands.guild_only()
-@bot.tree.command(name="setlevelchannel", description="Set the channel for level-up messages")
-@app_commands.checks.has_permissions(administrator=True)
-async def setlevelchannel(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel
-):
-    guild_id = str(interaction.guild.id)
-    config.setdefault(guild_id, {})
-    config[guild_id]["level_channel"] = channel.id
-    save_json(CONFIG_FILE, config)
-
-    await interaction.response.send_message(
-        f"✨ Level-up messages will now be sent to {channel.mention}",
-        ephemeral=True
+@bot.tree.command(name="help", description="Show help menu")
+async def help_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🧸 Dollhouse Lurker Help",
+        description="All commands are slash commands",
+        color=discord.Color.pink()
     )
 
+    embed.add_field(name="🎀 Welcome", value="/setwelcome\n/setwelcomemessage\n/addrequired", inline=False)
+    embed.add_field(name="🎭 Roles", value="/setautorole", inline=False)
+    embed.add_field(name="✨ Levels", value="/level\n/leaderboard\n/setlevelchannel", inline=False)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 @bot.tree.error
-async def on_app_command_error(
-    interaction: discord.Interaction,
-    error: app_commands.AppCommandError
-):
+async def on_app_command_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message(
-            "❌ You don't have permission to use this command.",
-            ephemeral=True
+            "❌ You don't have permission.", ephemeral=True
         )
-
     elif isinstance(error, app_commands.NoPrivateMessage):
         await interaction.response.send_message(
-            "❌ This command can only be used in servers.",
-            ephemeral=True
+            "❌ Server-only command.", ephemeral=True
         )
-
     else:
         await interaction.response.send_message(
-            "⚠️ Something went wrong while running this command.",
-            ephemeral=True
+            "⚠️ Command error occurred.", ephemeral=True
         )
         raise error
 
