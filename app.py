@@ -27,7 +27,12 @@ XP_COOLDOWN = 30
 xp_cooldowns = {}
 
 # --------------------
-# Bitchy Spam (DIVA)
+# Spam Safety
+# --------------------
+BOT_SPAM_WORDS = ["EW", "NAUR", "BYE", "YIKES", "CRINGE"]
+
+# --------------------
+# Diva → Bitchy Spam
 # --------------------
 BITCHY_SPAM_WORDS = ["EW", "NAUR", "BYE", "YIKES", "CRINGE"]
 BITCHY_SPAM_COUNT = 5
@@ -88,7 +93,6 @@ def save_json(file, data):
     with open(file, "w") as f:
         json.dump(data, f, indent=4)
 
-config = load_json(CONFIG_FILE, {})
 levels = load_json(LEVELS_FILE, {})
 
 # --------------------
@@ -107,33 +111,32 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
-    if message.author.bot or not message.guild:
+    if not message.guild:
         return
 
     content = message.content.lower()
     now = time.time()
     guild_id = message.guild.id
 
+    # 🚫 Stop infinite loops (ignore own spam words)
+    if message.author.bot and message.content.upper() in BOT_SPAM_WORDS:
+        return
+
     # --------------------
-    # Diva → Bitchy Spam (word OR tag)
+    # Diva → Bitchy Spam (humans + bot)
     # --------------------
     diva_triggered = False
 
-    # Word trigger
     if "diva" in content:
         diva_triggered = True
 
-    # User mention trigger
     for user in message.mentions:
         if "diva" in user.display_name.lower():
             diva_triggered = True
-            break
 
-    # Role mention trigger
     for role in message.role_mentions:
         if "diva" in role.name.lower():
             diva_triggered = True
-            break
 
     if diva_triggered:
         last = diva_cooldowns.get(guild_id, 0)
@@ -145,67 +148,78 @@ async def on_message(message: discord.Message):
             return
 
     # --------------------
-    # Scam Detection
+    # Scam Detection (humans only)
     # --------------------
-    for spam in SPAM_WORDS:
-        if spam in content:
-            await message.channel.send(
-                f"⚠️ {message.author.mention} don’t post scammy stuff here."
-            )
-            return
-
-    # --------------------
-    # Cute Auto Responses
-    # --------------------
-    for word, replies in AUTO_RESPONSES.items():
-        if word in content and random.random() < 0.15:
-            await message.channel.send(random.choice(replies))
-            break
-
-    for emoji, replies in EMOJI_TRIGGERS.items():
-        if emoji in message.content and random.random() < 0.25:
-            await message.channel.send(random.choice(replies))
-            break
-
-    if random.random() < 0.01:
-        await message.channel.send(random.choice(RARE_LINES))
+    if not message.author.bot:
+        for spam in SPAM_WORDS:
+            if spam in content:
+                await message.channel.send(
+                    f"⚠️ {message.author.mention} don’t post scammy stuff here."
+                )
+                return
 
     # --------------------
-    # Sassy Responses
+    # Cute + Sassy (humans only)
     # --------------------
-    for trigger, replies in SASSY_TRIGGERS.items():
-        if trigger in content and random.random() < 0.2:
-            await message.channel.send(random.choice(replies))
-            break
+    if not message.author.bot:
+        for word, replies in AUTO_RESPONSES.items():
+            if word in content and random.random() < 0.15:
+                await message.channel.send(random.choice(replies))
+                break
 
-    if random.random() < 0.03:
-        await message.channel.send(random.choice(SASSY_RANDOM))
+        for emoji, replies in EMOJI_TRIGGERS.items():
+            if emoji in message.content and random.random() < 0.25:
+                await message.channel.send(random.choice(replies))
+                break
+
+        if random.random() < 0.01:
+            await message.channel.send(random.choice(RARE_LINES))
+
+        for trigger, replies in SASSY_TRIGGERS.items():
+            if trigger in content and random.random() < 0.2:
+                await message.channel.send(random.choice(replies))
+                break
+
+        if random.random() < 0.03:
+            await message.channel.send(random.choice(SASSY_RANDOM))
 
     # --------------------
-    # XP System
+    # XP System (humans only)
     # --------------------
-    user_id = str(message.author.id)
-    xp_cooldowns.setdefault(guild_id, {})
-    last_time = xp_cooldowns[guild_id].get(user_id, 0)
+    if not message.author.bot:
+        user_id = str(message.author.id)
+        xp_cooldowns.setdefault(guild_id, {})
+        last_time = xp_cooldowns[guild_id].get(user_id, 0)
 
-    if now - last_time >= XP_COOLDOWN:
-        xp_cooldowns[guild_id][user_id] = now
-        levels.setdefault(str(guild_id), {})
-        user_data = levels[str(guild_id)].setdefault(user_id, {"xp": 0, "level": 1})
-        user_data["xp"] += random.randint(5, 10)
-
-        if user_data["xp"] >= user_data["level"] * 100:
-            user_data["level"] += 1
-            user_data["xp"] = 0
-            await message.channel.send(
-                f"🎀 {message.author.mention} reached **Level {user_data['level']}**"
+        if now - last_time >= XP_COOLDOWN:
+            xp_cooldowns[guild_id][user_id] = now
+            levels.setdefault(str(guild_id), {})
+            user_data = levels[str(guild_id)].setdefault(
+                user_id, {"xp": 0, "level": 1}
             )
 
-        save_json(LEVELS_FILE, levels)
+            user_data["xp"] += random.randint(5, 10)
+
+            if user_data["xp"] >= user_data["level"] * 100:
+                user_data["level"] += 1
+                user_data["xp"] = 0
+                await message.channel.send(
+                    f"🎀 {message.author.mention} reached **Level {user_data['level']}**"
+                )
+
+            save_json(LEVELS_FILE, levels)
 
     await bot.process_commands(message)
+
+# --------------------
+# Chaos Command (optional)
+# --------------------
+@bot.tree.command(name="diva", description="Unleash diva chaos")
+async def diva(interaction: discord.Interaction):
+    await interaction.response.send_message("diva")
 
 # --------------------
 # Run
 # --------------------
 bot.run(TOKEN)
+
